@@ -38,3 +38,10 @@ def create_mask(image, segments, exp = {}):
     # this is so that we have measurement matrix A
     mask_new = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
     return mask_new, mask
+
+def extend_channels(image, nc = 3):
+    return np.repeat(image[:, :, np.newaxis], 3, axis=2)
+
+def create_segments(image, kernel_size=2, max_dist=10, ratio=0.2):
+    image = extend_channels(image)
+    return skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
