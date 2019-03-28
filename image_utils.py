@@ -31,8 +31,6 @@ def create_mask(image, segments, exp = {}):
     mask = np.zeros(segments.shape)
     if 'feature' not in exp or len(exp['feature']) == 0:
         exp['feature'] = [1, 2, 7, 8, 9, 11, 16, 17, 18,19, 20, 24, 25, 28, 29, 30, 34, 36, 39, 40, 52]
-#        exp['feature'] = list(range(52))
-    print(exp['feature'])
     for f in exp['feature']:
         mask[segments == f] = 1
     # this is so that we have measurement matrix A
