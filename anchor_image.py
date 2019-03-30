@@ -1,8 +1,9 @@
-from . import anchor_base
+from anchor import anchor_base
 import numpy as np
 import sklearn
 import image_utils
 import csgm
+import torch
 class AnchorImageMNIST(object):
     """bla"""
     def __init__(self, distribution_path=None,
@@ -49,7 +50,7 @@ class AnchorImageMNIST(object):
         elif dataset is not None:
             self.mnist = dataset
             # assumes original dataset is from [0,1]
-            self.get_target = lambda x,mask = (x - 0.5) * 2 * mask
+            self.get_target = lambda x, mask : (x - 0.5) * 2 * mask
             
              
 
@@ -58,12 +59,12 @@ class AnchorImageMNIST(object):
         # segments = slic(image, n_segments=100, compactness=20)
         segments = self.segmentation(image)
         fudged_image = image.copy()
-        for x in np.unique(segments):
-            fudged_image[segments == x] = (np.mean(image[segments == x][:, 0]),
-                                           np.mean(image[segments == x][:, 1]),
-                                           np.mean(image[segments == x][:, 2]))
-        if self.white is not None:
-            fudged_image[:] = self.white
+        #for x in np.unique(segments):
+        #    fudged_image[segments == x] = (np.mean(image[segments == x][:, 0]),
+        #                                   np.mean(image[segments == x][:, 1]),
+        #                                   np.mean(image[segments == x][:, 2]))
+        #if self.white is not None:
+        #    fudged_image[:] = self.white
         features = list(np.unique(segments))
         n_features = len(features)
 
@@ -162,20 +163,26 @@ class AnchorImageMNIST(object):
             
             # now generate some images 
             _, mask = image_utils.create_mask(None, segments, {'feature': present})
-            target = self.get_target(image, mask) 
-            raw_data, backgrounds = csgm.reconstruct(target, mask, np.sum(mask), self.G, num_samples)
-            samples = np.zeros(num_samples,1,28,28)
-            for i in range(len(backgrounds)):
-                temp = copy.deepcopy(target)
-                curr = backgrounds[i] ## should be (28,28)
-                temp += curr
-                samples[i] = np.expand_dims(temp,0)
-
-            samples = torch.from_numpy(samples) 
-            preds = classifier_fn(samples)
-            preds_max = np.argmax(preds, axis=1)
-            labels = (preds_max == true_label).astype(int)  
-            return raw_data, data, np.array(labels)             
+            target = self.get_target(image, mask)
+            BS = 64
+            #raw_data = np.zeros((num_samples,28,28))
+            raw_data = data
+            labels = np.zeros((num_samples)).astype(int)
+            for j in range(0,num_samples,BS):
+                n_s = min(num_samples,j+BS) - j
+                _, backgrounds = csgm.reconstruct(target, mask, np.sum(mask), self.G, n_s)
+#                raw_data[j:j+n_s] = raw_data_.squeeze()
+                current_batch = np.zeros((n_s, 28,28))
+                for i in range(len(backgrounds)):
+                    temp = copy.deepcopy(target)
+                    curr = backgrounds[i] ## should be (28,28)
+                    temp += curr
+                    current_batch[i] = np.expand_dims(temp,0)
+                current_preds = classifier_fn(current_batch)
+                current_preds_max = np.argmax(current_preds, axis=1)
+                current_labels = (current_preds_max == true_label).astype(int)
+                labels[j:j+n_s] = current_labels 
+            return raw_data, data, labels             
  
         def sample_fn(present, num_samples, compute_labels=True):
             # TODO: I'm sampling in this different way because the way we were
@@ -202,17 +209,17 @@ class AnchorImageMNIST(object):
             raw_data = data
             return raw_data, data, labels
 
-        sample = sample_fn if self.hide else sample_fn_dummy
+        sample = sample_fn_csgm if self.hide else sample_fn_dummy
         return segments, sample
 
     def explain_instance(self, image, classifier_fn, threshold=0.95,
                           delta=0.1, tau=0.15, batch_size=100,
                            **kwargs):
         # classifier_fn is a predict_proba
-        segments, sample = self.get_sample_fn(image, classifier_fn)
+        segments, sample = self.get_sample_fn(image, classifier_fn) 
         exp = anchor_base.AnchorBaseBeam.anchor_beam(
             sample, delta=delta, epsilon=tau, batch_size=batch_size,
-            desired_confidence=threshold, **kwargs)
+            desired_confidence=threshold, coverage_samples=100,**kwargs)
         return segments, self.get_exp_from_hoeffding(image, exp)
 
     def get_exp_from_hoeffding(self, image, hoeffding_exp):

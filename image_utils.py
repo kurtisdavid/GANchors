@@ -27,7 +27,7 @@ def ShowImageNoAxis(image, boundaries=None, save=None):
     plt.show()
 
 def create_mask(image, segments, exp = {}):
-    temp = np.ones(image.shape)
+#    temp = np.ones(image.shape)
     mask = np.zeros(segments.shape)
     if 'feature' not in exp or len(exp['feature']) == 0:
         exp['feature'] = [1, 2, 7, 8, 9, 11, 16, 17, 18,19, 20, 24, 25, 28, 29, 30, 34, 36, 39, 40, 52]
