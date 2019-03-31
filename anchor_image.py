@@ -219,7 +219,7 @@ class AnchorImageMNIST(object):
         segments, sample = self.get_sample_fn(image, classifier_fn) 
         exp = anchor_base.AnchorBaseBeam.anchor_beam(
             sample, delta=delta, epsilon=tau, batch_size=batch_size,
-            desired_confidence=threshold, coverage_samples=100,**kwargs)
+            desired_confidence=threshold, coverage_samples=100,max_anchor_size=3,**kwargs)
         return segments, self.get_exp_from_hoeffding(image, exp)
 
     def get_exp_from_hoeffding(self, image, hoeffding_exp):
