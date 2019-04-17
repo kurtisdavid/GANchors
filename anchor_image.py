@@ -15,7 +15,7 @@ class AnchorImageMNIST(object):
         # generator baby
         self.G = G
         if segmentation_fn is None:
-            segmentation_fn = lambda x: image_utils.create_segments(x) 
+            segmentation_fn = lambda x: image_utils.create_segments(x)
         self.segmentation = segmentation_fn
         if dummys is not None:
             self.hide = False
@@ -51,8 +51,8 @@ class AnchorImageMNIST(object):
             self.mnist = dataset
             # assumes original dataset is from [0,1]
             self.get_target = lambda x, mask : (x - 0.5) * 2 * mask
-            
-             
+
+
 
     def get_sample_fn(self, image, classifier_fn, lime=False):
         import copy
@@ -160,8 +160,8 @@ class AnchorImageMNIST(object):
             '''
             data = np.zeros((num_samples,n_features))
             data[:, present] = 1
-            
-            # now generate some images 
+
+            # now generate some images
             _, mask = image_utils.create_mask(None, segments, {'feature': present})
             target = self.get_target(image, mask)
             BS = 64
@@ -170,7 +170,7 @@ class AnchorImageMNIST(object):
             labels = np.zeros((num_samples)).astype(int)
             for j in range(0,num_samples,BS):
                 n_s = min(num_samples,j+BS) - j
-                _, backgrounds = csgm.reconstruct(target, mask, np.sum(mask), self.G, n_s)
+                _, backgrounds = csgm.reconstruct_batch(target, mask, np.sum(mask), self.G, n_s)
 #                raw_data[j:j+n_s] = raw_data_.squeeze()
                 current_batch = np.zeros((n_s, 28,28))
                 for i in range(len(backgrounds)):
@@ -181,9 +181,9 @@ class AnchorImageMNIST(object):
                 current_preds = classifier_fn(current_batch)
                 current_preds_max = np.argmax(current_preds, axis=1)
                 current_labels = (current_preds_max == true_label).astype(int)
-                labels[j:j+n_s] = current_labels 
-            return raw_data, data, labels             
- 
+                labels[j:j+n_s] = current_labels
+            return raw_data, data, labels
+
         def sample_fn(present, num_samples, compute_labels=True):
             # TODO: I'm sampling in this different way because the way we were
             # sampling confounds size of the document with feature presence
@@ -216,10 +216,10 @@ class AnchorImageMNIST(object):
                           delta=0.1, tau=0.15, batch_size=100,
                            **kwargs):
         # classifier_fn is a predict_proba
-        segments, sample = self.get_sample_fn(image, classifier_fn) 
+        segments, sample = self.get_sample_fn(image, classifier_fn)
         exp = anchor_base.AnchorBaseBeam.anchor_beam(
             sample, delta=delta, epsilon=tau, batch_size=batch_size,
-            desired_confidence=threshold, coverage_samples=100,max_anchor_size=3,**kwargs)
+            desired_confidence=threshold, coverage_samples=1000,max_anchor_size=3,**kwargs)
         return segments, self.get_exp_from_hoeffding(image, exp)
 
     def get_exp_from_hoeffding(self, image, hoeffding_exp):
