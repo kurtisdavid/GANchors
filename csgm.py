@@ -10,6 +10,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
     A = torch.FloatTensor(filter).cuda()
     z = torch.randn(64,z_dim,1,1,requires_grad = True).cuda()
     z_param = torch.nn.Parameter(z)
+    batch_y = y.unsqueeze(0).repeat(z.shape[0],1,1)
     complete_zs = [] #np.array([]) #torch.nn.Parameter()
     # Repalce SGD with Adam?
     #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
@@ -18,25 +19,28 @@ def reconstruct_batch(target, filter, n_pixels, G,
     step = 0
     last_size = num_samples
     while last_size > 0:
+#        print(batch_y.shape)
         if (step > 1000):
             print('restarting with ',z_param.size()[0], ' left')
             step = 0
             z = torch.randn(64,z_dim,1,1,requires_grad = True).cuda()
             z_param = torch.nn.Parameter(z)
             optim = torch.optim.Adam([z_param], lr=1)
+            batch_y = y.unsqueeze(0).repeat(z.shape[0],1,1)
 
         step += 1
         optim.zero_grad()
         x_hat = G(z_param).view(z_param.size()[0],28,28)
         y_hat = x_hat * A
 
-        loss = i_se(y_hat,y)/(n_pixels)
+        loss = i_se(y_hat,batch_y)/(n_pixels)
         loss_filt = loss[loss.data > threshold]
         loss_val = loss_filt.data.cpu().numpy()
-
-        loss_mean = loss_filt.mean()
-        loss_mean.backward()
-        optim.step()
+        
+        if loss_filt.shape[0] > 0:
+            loss_mean = loss_filt.mean()
+            loss_mean.backward()
+            optim.step()
 
         z_completed = z_param[loss.data < threshold]
         if z_completed.size()[0] != 0:
@@ -47,6 +51,8 @@ def reconstruct_batch(target, filter, n_pixels, G,
             complete_zs.append(z_completed.data.cpu().numpy()[:min_len].reshape(min_len, z_dim, 1, 1))
             z_param = torch.nn.Parameter(z_param[loss.data > threshold])
             optim = torch.optim.Adam([z_param], lr=1)
+            if z_param.shape[0] > 0: 
+                batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
 
     final_z = np.array(complete_zs[0])
