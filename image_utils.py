@@ -40,6 +40,15 @@ def create_mask(image, segments, exp = {}):
 def extend_channels(image, nc = 3):
     return np.repeat(image[:, :, np.newaxis], 3, axis=2)
 
-def create_segments(image, kernel_size=2, max_dist=10, ratio=0.2):
+def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2, target_num=15):
     image = extend_channels(image)
-    return skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
+    seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
+    md = 3
+    while len(np.unique(seg)) != target_num:
+        error = len(np.unique(seg))/target_num - 1
+        md += error
+        seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
+
+    print("found max_dist of ", md, " created ",target_num," segments")
+    return seg
+

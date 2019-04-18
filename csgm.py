@@ -36,7 +36,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
         loss = i_se(y_hat,batch_y)/(n_pixels)
         loss_filt = loss[loss.data > threshold]
         loss_val = loss_filt.data.cpu().numpy()
-        
+
         if loss_filt.shape[0] > 0:
             loss_mean = loss_filt.mean()
             loss_mean.backward()
@@ -51,7 +51,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
             complete_zs.append(z_completed.data.cpu().numpy()[:min_len].reshape(min_len, z_dim, 1, 1))
             z_param = torch.nn.Parameter(z_param[loss.data > threshold])
             optim = torch.optim.Adam([z_param], lr=1)
-            if z_param.shape[0] > 0: 
+            if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
 
@@ -62,7 +62,6 @@ def reconstruct_batch(target, filter, n_pixels, G,
     sampled = G(torch.from_numpy(np.array(final_z)).cuda()).view(num_samples,28,28)
     unmasked = sampled * (1-A)
 
-    print("COMPLETED")
     return sampled.data.cpu().numpy(), unmasked.data.cpu().numpy()
 '''
     sampled = G(z_param).view(-1,28,28)
