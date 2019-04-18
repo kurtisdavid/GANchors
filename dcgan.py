@@ -17,10 +17,33 @@ import torchvision.utils as vutils
 import torch.nn.functional as F
 # python dcgan.py --dataset mnist --dataroot /scratch/users/vision/yu_dl/raaz.rsk/data/cifar10 --imageSize 28 --cuda --outf . --manualSeed 13 --niter 100
 
+i_se = lambda x,y: torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1)
+
+# container class for a GAN that also provides a log_P method
+class ProbGenerator(nn.Module):
+    
+    def __init__(self, G, anchor, target):
+        super(ProbGenerator, self).__init__()
+        self.G = G
+        self.anchor = anchor.cuda() # just a binary filter
+        self.target = target.cuda() # filtered anchor
+        
+    def forward(self, Z):
+        return self.G(Z)
+    
+    def log_prob(self, Z):
+        gen = self.G(Z.view(-1,100,1,1)).squeeze()
+        yhat = gen * self.anchor
+        error = i_se(yhat, self.target.unsqueeze(0).repeat(Z.shape[0],1,1))
+        # if P = exp( -error ) -> log_P = -error
+        return -error
+        
+        
+
 def load_generator(path='./weights'):
     G = Generator(1)
     G.load_state_dict(torch.load('./weights/netG_epoch_99.pth'))
-    return G 
+    return G
 
 class Generator(nn.Module):
     def __init__(self, ngpu, nc=1, nz=100, ngf=64):
