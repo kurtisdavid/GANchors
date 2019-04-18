@@ -42,5 +42,13 @@ def extend_channels(image, nc = 3):
 
 def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2):
     image = extend_channels(image)
-    return skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
+    seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
+    md = 3
+    while len(np.unique(seg)) != 10:
+        error = len(np.unique(seg))/10 - 1
+        md += error
+        seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
+
+    print("found max_dist of ", md, " created 10 segments")
+    return seg
 
