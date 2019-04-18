@@ -160,7 +160,7 @@ class AnchorImageMNIST(object):
             '''
             data = np.zeros((num_samples,n_features))
             data[:, present] = 1
-
+            print(num_samples)
             # now generate some images
             _, mask = image_utils.create_mask(None, segments, {'feature': present})
             target = self.get_target(image, mask)
@@ -174,10 +174,10 @@ class AnchorImageMNIST(object):
 #                raw_data[j:j+n_s] = raw_data_.squeeze()
                 current_batch = np.zeros((n_s, 28,28))
                 for i in range(len(backgrounds)):
-                    temp = copy.deepcopy(target)
-                    curr = backgrounds[i] ## should be (28,28)
-                    temp += curr
-                    current_batch[i] = np.expand_dims(temp,0)
+                    # temp = copy.deepcopy(target)
+                    curr = backgrounds[i] + target## should be (28,28)
+                    # temp += curr
+                    current_batch[i,:,:] = np.expand_dims(curr,0)
                 current_preds = classifier_fn(current_batch)
                 current_preds_max = np.argmax(current_preds, axis=1)
                 current_labels = (current_preds_max == true_label).astype(int)
@@ -219,7 +219,7 @@ class AnchorImageMNIST(object):
         segments, sample = self.get_sample_fn(image, classifier_fn)
         exp = anchor_base.AnchorBaseBeam.anchor_beam(
             sample, delta=delta, epsilon=tau, batch_size=batch_size,
-            desired_confidence=threshold, coverage_samples=1000,max_anchor_size=3,**kwargs)
+            desired_confidence=threshold, coverage_samples=100,max_anchor_size=3,**kwargs)
         return segments, self.get_exp_from_hoeffding(image, exp)
 
     def get_exp_from_hoeffding(self, image, hoeffding_exp):
