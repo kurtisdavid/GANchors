@@ -22,26 +22,42 @@ i_se = lambda x,y: torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),d
 # container class for a GAN that also provides a log_P method
 class ProbGenerator(nn.Module):
     
-    def __init__(self, G, anchor, target):
+    def __init__(self, G, anchor, target, threshold = 0.05):
         super(ProbGenerator, self).__init__()
         self.G = G
-        self.anchor = anchor.cuda() # just a binary filter
-        self.target = target.cuda() # filtered anchor
-        
+        self.anchor = torch.FloatTensor(anchor).cuda() # just a binary filter
+        self.num_pixels = self.anchor.sum()
+        self.target = torch.FloatTensor(target).cuda() # filtered anchor
+        self.threshold = threshold
+ 
     def forward(self, Z):
         return self.G(Z)
     
-    def log_prob(self, Z):
-        gen = self.G(Z.view(-1,100,1,1)).squeeze()
+    def log_prob(self, Z, debug = False):
+        gen = self.G(Z.view(Z.shape[0],100,1,1)).view(Z.shape[0],28,28)
         yhat = gen * self.anchor
-        error = i_se(yhat, self.target.unsqueeze(0).repeat(Z.shape[0],1,1))
+        if debug:
+            print(yhat.shape)
+            print(self.num_pixels)
+        error = i_se(yhat, self.target.unsqueeze(0).repeat(Z.shape[0],1,1))/self.num_pixels
         # if P = exp( -error ) -> log_P = -error
         return -error
-        
+
+    def filter_samples(self, Z):
+        try:
+            Z = torch.from_numpy(Z).type(torch.FloatTensor).cuda().view(-1,100,1,1)
+        except:
+            pass
+        gen = self.G(Z.view(-1,100,1,1)).view(Z.shape[0],28,28)
+        yhat = gen * self.anchor
+        error = i_se(yhat, self.target.unsqueeze(0).repeat(Z.shape[0],1,1))/self.num_pixels
+        return gen[error.data < self.threshold] 
+
+            
         
 
 def load_generator(path='./weights'):
-    G = Generator(1)
+    G = Generator(1).eval()
     G.load_state_dict(torch.load('./weights/netG_epoch_99.pth'))
     return G
 
