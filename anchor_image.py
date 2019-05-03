@@ -4,6 +4,9 @@ import sklearn
 import image_utils
 import csgm
 import torch
+import dcgan
+import svgd
+
 class AnchorImageMNIST(object):
     """bla"""
     def __init__(self, distribution_path=None,
@@ -51,7 +54,7 @@ class AnchorImageMNIST(object):
             self.mnist = dataset
             # assumes original dataset is from [0,1]
             self.get_target = lambda x, mask : (x - 0.5) * 2 * mask
-
+            self.present = None
 
 
     def get_sample_fn(self, image, classifier_fn, lime=False):
@@ -153,6 +156,78 @@ class AnchorImageMNIST(object):
             raw_data = np.hstack((data, chosen.reshape(-1, 1)))
             return raw_data, data, np.array(labels)
 
+        # testing with kde method
+        def sample_fn_stein(present, num_samples, compute_labels=True):
+            '''
+            present = which segments to choose from...
+            '''
+            data = np.zeros((num_samples,n_features))
+            data[:, present] = 1
+            print(num_samples)
+            # now generate some images
+            _, mask = image_utils.create_mask(None, segments, {'feature': present})
+            target = self.get_target(image, mask)
+            # first time we called it
+            if self.stein is None:
+                # setup for stein's
+                G = dcgan.ProbGenerator(self.G, mask, target)
+                K = svgd.RBF()
+                X = torch.randn(num_samples,100).cuda()
+                adam = torch.optim.Adam([X], lr=1e-1)
+                self.stein = svgd.SVGD(G,K,adam)
+                # train...
+                print("Starting Stein Training")
+                X = self.stein.train(X, num_iter = 1000)
+                print("Trained!")
+                 
+            BS = 64
+            collected = 0
+            labels = np.zeros((num_samples)).astype(int)
+            raw_data = data
+            print("Predicting...")
+            while collected < num_samples:
+                X = self.stein.sample(BS)
+                if X.shape[0] == 0:
+                #    print("Bad samples")
+                    continue
+                #print("KDE found", X.shape[0], "good samples.") 
+                backgrounds = X.view(-1,28,28).data.cpu().numpy() * (1-target)
+                end = min(backgrounds.shape[0], num_samples - collected)
+                backgrounds = backgrounds[:end]
+                current_batch = backgrounds + target 
+                current_preds = classifier_fn(current_batch)
+                current_preds_max = np.argmax(current_preds, axis=1)
+                current_labels = (current_preds_max == true_label).astype(int)
+                labels[collected:collected + end] = current_labels
+                collected += end
+            print("Collected", num_samples,"!")
+            return raw_data, data, labels
+
+        # new and IMPROVED with csgm + KDE
+        def sample_fn_csgm_kde(present, num_samples, compute_labels=True):
+            '''
+            present = which segments to choose from...
+            '''
+            data = np.zeros((num_samples,n_features))
+            data[:, present] = 1
+            print(num_samples)
+            # now generate some images
+            _, mask = image_utils.create_mask(None, segments, {'feature': present})
+            target = self.get_target(image, mask)
+            if self.present != present:
+                self.sampler = csgm.CSGM(target,mask,self.G,num_samples,bandwidth=0.5)
+            self.present = present
+            BS = 64
+            #raw_data = np.zeros((num_samples,28,28))
+            raw_data = data
+            _,_,backgrounds = self.sampler.sample(num_samples)
+            current_batch = backgrounds + target
+            current_preds = classifier_fn(current_batch)
+            current_preds_max = np.argmax(current_preds, axis=1)
+            labels = (current_preds_max == true_label).astype(int)
+            return raw_data, data, labels
+
+
         # new and IMPROVED with csgm
         def sample_fn_csgm(present, num_samples, compute_labels=True):
             '''
@@ -208,8 +283,9 @@ class AnchorImageMNIST(object):
             # raw_data = imgs
             raw_data = data
             return raw_data, data, labels
-
-        sample = sample_fn_csgm if self.hide else sample_fn_dummy
+        self.stein = None
+#        sample = sample_fn_stein
+        sample = sample_fn_csgm_kde if self.hide else sample_fn_dummy
         return segments, sample
 
     def explain_instance(self, image, classifier_fn, threshold=0.95,
