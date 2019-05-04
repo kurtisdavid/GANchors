@@ -4,6 +4,8 @@ import numpy as np
 from torch.autograd import backward
 from sklearn.neighbors.kde import KernelDensity
 from pytorch_pretrained_biggan import truncated_noise_sample
+from pytorch_pretrained_biggan import (BigGAN, one_hot_from_names, truncated_noise_sample, save_as_images)
+import torchvision.models as models
 
 i_se = lambda x,y: torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1)
 i_se_3d = lambda x,y: torch.sum(torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1), dim=1)
@@ -15,7 +17,7 @@ class CSGM(torch.nn.Module):
     def __init__(self, target, filter, G, num_samples,
                  BS = 64, init_threshold = 1e-2, threshold=0.05,
                  bandwidth = 0.1, lr = 1e-2):
-        super(CSGM, self).__init__() 
+        super(CSGM, self).__init__()
         self.target = torch.FloatTensor(target).cuda()
         self.A = torch.FloatTensor(filter).cuda()
         self.num_samples = num_samples
@@ -24,13 +26,13 @@ class CSGM(torch.nn.Module):
         self.threshold = threshold
         self.init_threshold = init_threshold
         self.BS = BS
-        # determine the points for KDE 
+        # determine the points for KDE
         self.z, self.init_samples, self.init_bg = reconstruct_batch(target, filter, self.n_pixels,
                     G, num_samples, threshold=init_threshold, lr = lr)
         self.Dz = KernelDensity(kernel='gaussian', bandwidth=bandwidth).fit(self.z.reshape(num_samples,100))
 
     def update_sampler(self, bandwidth):
-        self.Dz = KernelDensity(kernel='gaussian', bandwidth=bandwidth).fit(self.z.reshape(-1,100)) 
+        self.Dz = KernelDensity(kernel='gaussian', bandwidth=bandwidth).fit(self.z.reshape(-1,100))
     def sample(self, num_samples):
         count = 0
         z_samples = []
@@ -38,7 +40,7 @@ class CSGM(torch.nn.Module):
         bg_samples = []
         while count < num_samples:
             Z = self.Dz.sample(self.BS)
-            Z = torch.FloatTensor(Z).cuda().view(-1,100,1,1)    
+            Z = torch.FloatTensor(Z).cuda().view(-1,100,1,1)
             gen = self.G(Z).view(Z.shape[0],28,28)
             yhat = gen*self.A
             error = i_se(yhat, self.target.unsqueeze(0).repeat(Z.shape[0],1,1))/self.n_pixels
@@ -49,21 +51,26 @@ class CSGM(torch.nn.Module):
             bg = gen[:end]*(1-self.A)
             z_samples.append(Z[:end].data.cpu().numpy())
             gen_samples.append(gen[:end].data.cpu().numpy())
-            bg_samples.append(bg.data.cpu().numpy()) 
+            bg_samples.append(bg.data.cpu().numpy())
             count += end
-        
+
         z_samples   = np.concatenate(z_samples, axis=0)
         gen_samples = np.concatenate(gen_samples, axis=0)
         bg_samples  = np.concatenate(bg_samples, axis=0)
-        
-        return z_samples, gen_samples, bg_samples 
 
-def reconstruct_batch_ImageNet(target, filter, n_pixels, G, 
+        return z_samples, gen_samples, bg_samples
+
+def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
                                num_samples, z_dim=128, img_dim=128, n_channels = 3,
                                n_iter = 1000, threshold=0.05, truncation=1.0):
+    bs_ = 1
+    G.to('cuda')
+    class_vector = one_hot_from_names(['dog'], batch_size=bs_)
+    class_vector = torch.from_numpy(class_vector)
+    class_vec = class_vector.to('cuda')
     y = torch.FloatTensor(target).cuda()
     A = torch.FloatTensor(filter).cuda()
-    z = torch.FloatTensor(truncated_noise_sample(truncation=truncation, batch_size = 64)).cuda()
+    z = torch.FloatTensor(truncated_noise_sample(truncation=truncation, batch_size = bs_)).cuda()
     z_param = torch.nn.Parameter(z)
     #batch_y = y.unsqueeze(0).repeat(z.shape[0],1,1)
     complete_zs = [] #np.array([]) #torch.nn.Parameter()
@@ -71,16 +78,16 @@ def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
     lr = 1e-2
 #    optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
     optim = torch.optim.Adam([z_param], lr=lr)
-    
+
     step = 0
     last_size = num_samples
     sampled = []
     while last_size > 0:
 #        print(batch_y.shape)
-        if (step > 1000) or z_param.shape[0] == 0:
+        if (step > 100000) or z_param.shape[0] == 0:
             print('restarting with ',last_size, ' left')
             step = 0
-            z = torch.FloatTensor(truncated_noise_sample(truncation=truncation, batch_size = 64)).cuda()
+            z = torch.FloatTensor(truncated_noise_sample(truncation=truncation, batch_size = bs_)).cuda()
             z_param = torch.nn.Parameter(z)
 #            optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
             optim = torch.optim.Adam([z_param], lr=lr)
@@ -88,12 +95,13 @@ def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
 
         step += 1
         optim.zero_grad()
-        x_hat = G(z_param, truncation).view(z_param.size()[0],n_channels,img_dim,img_dim)
+        x_hat = G(z_param, class_vec, truncation).view(z_param.size()[0],n_channels,img_dim,img_dim)
         y_hat = x_hat * A
 
         loss = i_se_3d(y_hat,y)/(n_pixels*n_channels)
         loss_filt = loss[loss.data > threshold]
         loss_val = loss_filt.data.cpu().numpy()
+        print(loss_val)
 
         if loss_filt.shape[0] > 0:
             loss_mean = loss_filt.mean()
@@ -112,21 +120,21 @@ def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
             # also cutoff those that have anything larger than truncation level...
             cutoffs = torch.sum ( torch.abs(z) > 1, dim = 1) > 0
             z[cutoffs] = torch.FloatTensor(truncated_noise_sample(truncation=truncation,
-                                                                  batch_size=torch.sum(cutoffs).item())).cuda() 
+                                                                  batch_size=torch.sum(cutoffs).item())).cuda()
             z_param = torch.nn.Parameter(z)
 #            optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
             optim = torch.optim.Adam([z_param], lr=lr)
             #if z_param.shape[0] > 0:
              #   batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
-    
+
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)
 
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
-    
-    
+
+
 
 def reconstruct_batch(target, filter, n_pixels, G,
                 num_samples, z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, threshold = 0.05, lr=1e-2, opt='adam', lambda_ = 0, def_size = 64):
@@ -137,16 +145,16 @@ def reconstruct_batch(target, filter, n_pixels, G,
     batch_y = y.unsqueeze(0).repeat(z.shape[0],1,1)
     complete_zs = [] #np.array([]) #torch.nn.Parameter()
     # Repalce SGD with Adam?
-    
+
     if opt == 'adam':
         optim = torch.optim.Adam([z_param], lr=lr)
     else:
         optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
-    
+
     step = 0
     last_size = num_samples
     sampled = []
-    first_lr = lr 
+    first_lr = lr
     while last_size > 0:
 #        print(batch_y.shape)
         if (step > 1000) or z_param.shape[0] == 0:
@@ -199,7 +207,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
-    
+
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)
