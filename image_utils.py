@@ -40,11 +40,16 @@ def create_mask(image, segments, exp = {}):
 def extend_channels(image, nc = 3):
     return np.repeat(image[:, :, np.newaxis], 3, axis=2)
 
-def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2, target_num=15):
-    image = extend_channels(image)
-    seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
+def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2, target_num=15, imagenet=False):
+    if not imagenet:
+        image = extend_channels(image)
+        seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
+    else:
+        seg = skimage.segmentation.slic(image, n_segments=25, compactness=20)
+        return seg
     md = 3
     while len(np.unique(seg)) != target_num:
+        print(len(np.unique(seg)), md)
         error = len(np.unique(seg))/target_num - 1
         md += error
         seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
