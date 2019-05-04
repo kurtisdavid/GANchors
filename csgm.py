@@ -3,7 +3,7 @@ import torchvision
 import numpy as np
 from torch.autograd import backward
 from sklearn.neighbors.kde import KernelDensity
-#from pytorch_pretrained_biggan import truncated_noise_sample
+from pytorch_pretrained_biggan import truncated_noise_sample
 
 i_se = lambda x,y: torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1)
 i_se_3d = lambda x,y: torch.sum(torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1), dim=1)
