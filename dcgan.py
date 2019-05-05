@@ -15,6 +15,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import torch.nn.functional as F
+import math
 # python dcgan.py --dataset mnist --dataroot /scratch/users/vision/yu_dl/raaz.rsk/data/cifar10 --imageSize 28 --cuda --outf . --manualSeed 13 --niter 100
 
 i_se = lambda x,y: torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1)
@@ -22,13 +23,14 @@ i_se = lambda x,y: torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),d
 # container class for a GAN that also provides a log_P method
 class ProbGenerator(nn.Module):
     
-    def __init__(self, G, anchor, target, threshold = 0.05):
+    def __init__(self, G, anchor, target, threshold = 0.05, eps = 0.1):
         super(ProbGenerator, self).__init__()
         self.G = G
         self.anchor = torch.FloatTensor(anchor).cuda() # just a binary filter
         self.num_pixels = self.anchor.sum()
         self.target = torch.FloatTensor(target).cuda() # filtered anchor
         self.threshold = threshold
+        self.h = self.threshold/(-1*math.log(eps))
  
     def forward(self, Z):
         return self.G(Z)
@@ -40,8 +42,10 @@ class ProbGenerator(nn.Module):
             print(yhat.shape)
             print(self.num_pixels)
         error = i_se(yhat, self.target.unsqueeze(0).repeat(Z.shape[0],1,1))/self.num_pixels
-        # if P = exp( -error ) -> log_P = -error
-        return -error
+        error[error > self.threshold] = 0
+        return torch.log(torch.nn.Sigmoid()((error - 0.025)*200)/5)        
+        # if P = exp( -error / self.h ) -> log_P = -error/self.h
+#        return -error/self.h
 
     def filter_samples(self, Z):
         try:
@@ -51,14 +55,16 @@ class ProbGenerator(nn.Module):
         gen = self.G(Z.view(-1,100,1,1)).view(Z.shape[0],28,28)
         yhat = gen * self.anchor
         error = i_se(yhat, self.target.unsqueeze(0).repeat(Z.shape[0],1,1))/self.num_pixels
-        return gen[error.data < self.threshold] 
+        return Z[error.data <= self.threshold], gen[error.data <= self.threshold] 
 
             
         
 
-def load_generator(path='./weights'):
-    G = Generator(1).eval()
+def load_generator(path='./weights', eval=True):
+    G = Generator(1)
     G.load_state_dict(torch.load('./weights/netG_epoch_99.pth'))
+    if eval:
+        G.eval()
     return G
 
 class Generator(nn.Module):
