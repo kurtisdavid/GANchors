@@ -11,12 +11,17 @@ class AnchorImageMNIST(object):
     """bla"""
     def __init__(self, distribution_path=None,
                  transform_img_fn=None, n=1000, dummys=None, white=None,
-                 segmentation_fn=None, G=None, dataset = None):
+                 segmentation_fn=None, G=None, dataset = None, batch_norm=False):
         """"""
         self.hide = True
         self.white = white
-        # generator baby
-        self.G = G
+        # generator
+        if G is not None:
+            self.G = G(0).cuda()
+            if batch_norm:
+                self.G.train()
+            else:
+                self.G.eval()
         if segmentation_fn is None:
             segmentation_fn = lambda x: image_utils.create_segments(x) 
         self.segmentation = segmentation_fn
@@ -133,7 +138,6 @@ class AnchorImageMNIST(object):
                 temp = copy.deepcopy(image)
                 zeros = np.where(d == 0)[0]
                 mask = np.zeros(segments.shape).astype(bool)
-                print(mask.shape)
                 for z in zeros:
                     mask[segments == z] = True
                 if self.white:
@@ -244,7 +248,7 @@ class AnchorImageMNIST(object):
             labels = np.zeros((num_samples)).astype(int)
             for j in range(0,num_samples,BS):
                 n_s = min(num_samples,j+BS) - j
-                _, backgrounds = csgm.reconstruct(target, mask, np.sum(mask), self.G, n_s)
+                _,_, backgrounds = csgm.reconstruct_batch(target, mask, np.sum(mask), self.G, n_s)
 #                raw_data[j:j+n_s] = raw_data_.squeeze()
                 current_batch = np.zeros((n_s, 28,28))
                 for i in range(len(backgrounds)):
@@ -284,7 +288,7 @@ class AnchorImageMNIST(object):
             return raw_data, data, labels
         self.stein = None
 #        sample = sample_fn_stein
-        sample = sample_fn_csgm_kde if self.hide else sample_fn_dummy
+        sample = sample_fn_csgm if self.hide else sample_fn_dummy
         return segments, sample
 
     def explain_instance(self, image, classifier_fn, threshold=0.95,
