@@ -50,8 +50,8 @@ def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2, target_num=15, 
     md = 3
     while len(np.unique(seg)) > target_num:
         print(len(np.unique(seg)), md)
-        error = len(np.unique(seg))/target_num - 1
-        md += error
+#        error = len(np.unique(seg))/target_num - 1
+        md += .1
         seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
 
     print("found max_dist of ", md, " created ",target_num," segments")
