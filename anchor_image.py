@@ -6,7 +6,7 @@ import csgm
 import torch
 import dcgan
 import svgd
-
+import matplotlib.pyplot as plt
 class AnchorImageMNIST(object):
     """bla"""
     def __init__(self, distribution_path=None,
@@ -15,6 +15,7 @@ class AnchorImageMNIST(object):
         """"""
         self.hide = True
         self.white = white
+        self.batch_norm = batch_norm
         # generator
         if G is not None:
             self.G = G(0).cuda()
@@ -236,19 +237,26 @@ class AnchorImageMNIST(object):
             '''
             present = which segments to choose from...
             '''
+            if not compute_labels:
+                data = np.random.randint(
+                    0, 2, num_samples * n_features).reshape(
+                        (num_samples, n_features))
+                data[:, present] = 1
+                return [], data, []
+
             data = np.zeros((num_samples,n_features))
             data[:, present] = 1
-            
             # now generate some images 
             _, mask = image_utils.create_mask(None, segments, {'feature': present})
             target = self.get_target(image, mask)
+            #plt.imshow(target)
             BS = 64
             #raw_data = np.zeros((num_samples,28,28))
             raw_data = data
             labels = np.zeros((num_samples)).astype(int)
             for j in range(0,num_samples,BS):
                 n_s = min(num_samples,j+BS) - j
-                _,_, backgrounds = csgm.reconstruct_batch(target, mask, np.sum(mask), self.G, n_s)
+                _,_, backgrounds = csgm.reconstruct_batch(target, mask, np.sum(mask), self.G, n_s, lr= 1e-1 if self.batch_norm else 1e-2)
 #                raw_data[j:j+n_s] = raw_data_.squeeze()
                 current_batch = np.zeros((n_s, 28,28))
                 for i in range(len(backgrounds)):
@@ -296,10 +304,10 @@ class AnchorImageMNIST(object):
                            **kwargs):
         # classifier_fn is a predict_proba
         segments, sample = self.get_sample_fn(image, classifier_fn) 
-        exp = anchor_base.AnchorBaseBeam.anchor_beam(
+        best_coverage, exp = anchor_base.AnchorBaseBeam.anchor_beam(
             sample, delta=delta, epsilon=tau, batch_size=batch_size,
             desired_confidence=threshold, coverage_samples=100,max_anchor_size=3,**kwargs)
-        return segments, self.get_exp_from_hoeffding(image, exp)
+        return best_coverage, segments, self.get_exp_from_hoeffding(image, exp)
 
     def get_exp_from_hoeffding(self, image, hoeffding_exp):
         """

@@ -29,7 +29,7 @@ def ShowImageNoAxis(image, boundaries=None, save=None):
 def create_mask(image, segments, exp = {}):
 #    temp = np.ones(image.shape)
     mask = np.zeros(segments.shape)
-    if 'feature' not in exp or len(exp['feature']) == 0:
+    if 'feature' not in exp:
         exp['feature'] = [1, 2, 7, 8, 9, 11, 16, 17, 18,19, 20, 24, 25, 28, 29, 30, 34, 36, 39, 40, 52]
     for f in exp['feature']:
         mask[segments == f] = 1
@@ -48,12 +48,18 @@ def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2, target_num=15, 
         seg = skimage.segmentation.slic(image, n_segments=target_num, compactness=compactness)
         return seg
     md = 3
-    while len(np.unique(seg)) > target_num:
-        print(len(np.unique(seg)), md)
-#        error = len(np.unique(seg))/target_num - 1
-        md += .1
-        seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
-
-    print("found max_dist of ", md, " created ",target_num," segments")
+    ct = .1
+    while len(np.unique(seg)) != target_num:
+        while len(np.unique(seg)) > target_num:
+#            print(len(np.unique(seg)), md)
+        #        error = len(np.unique(seg))/target_num - 1
+            md += ct
+            seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
+        while len(np.unique(seg)) < target_num:
+#            print(len(np.unique(seg)), md)
+            md -= ct/4
+            seg = skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
+        ct /= 4 
+    print(len(np.unique(seg)), md)
     return seg
 

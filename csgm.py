@@ -135,7 +135,8 @@ def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
 
 def reconstruct_batch_threshold(target, filter, n_pixels, G,
-                num_samples,threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000,lr=1e-2, opt='adam', lambda_ = 0, def_size = 64):
+                num_samples,threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, lr=1e-2, 
+                opt='adam', lambda_ = 0, def_size = 64):
     y = torch.FloatTensor(target).cuda()
     A = torch.FloatTensor(filter).cuda()
     z = torch.randn(def_size,z_dim,1,1,requires_grad = True).cuda()
@@ -262,7 +263,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
         x_hat = G(z_param).view(z_param.size()[0],28,28)
         y_hat = x_hat * A
 
-        loss = i_se(y_hat,batch_y)/(n_pixels)
+        loss = i_se(y_hat,batch_y)/(n_pixels + 1e-9)
         loss_filt = loss[loss.data > threshold]
         loss_val = loss_filt.data.cpu().numpy()
 
@@ -270,8 +271,8 @@ def reconstruct_batch(target, filter, n_pixels, G,
             loss_mean = loss_filt.mean()
             reg = z_param.norm(p=2) * lambda_
             loss_f = loss_mean + reg
-            #if step % 50 == 0:
-            #    print(np.amin(loss_val))
+    #        if step % 50 == 0:
+    #            print(np.amin(loss_val))
             loss_f.backward()
             optim.step()
         if step % 400 == 0 and opt != 'adam':
@@ -295,7 +296,6 @@ def reconstruct_batch(target, filter, n_pixels, G,
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
-
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)
