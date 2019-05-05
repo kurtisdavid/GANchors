@@ -203,7 +203,6 @@ def reconstruct_batch_threshold(target, filter, n_pixels, G,
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
->>>>>>> ff7c24695f58452e6baf01bd7075a8668284b159
     
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
