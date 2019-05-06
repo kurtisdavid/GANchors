@@ -227,7 +227,11 @@ def reconstruct_batch(target, filter, n_pixels, G,
         if init_mu is None and init_sigma is None:
             z = torch.randn(def_size,z_dim,1,1,requires_grad = True).cuda()
         else:
-            z = (init_mu + init_sigma * torch.randn(def_size, z_dim).cuda()).view(-1,z_dim,1,1)
+            idx = np.random.randint(0,len(init_mu), size=(def_size,))
+            z = torch.zeros(def_size, z_dim).cuda()
+            for i in range(def_size):
+                z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).cuda()
+            z = z.view(-1,z_dim,1,1) 
         return z
     z = create_z(def_size)
     z_param = torch.nn.Parameter(z)
@@ -296,6 +300,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
+    print(step)
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)

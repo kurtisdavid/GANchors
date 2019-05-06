@@ -1,28 +1,41 @@
-import tensorflow as tf
-import tensorflow_hub as hub
-import sys
-sys.path.append('./tf-models/slim')
-from nets import inception
-from preprocessing import inception_preprocessing
+import torch.nn as nn
+import torch
+import numpy as np
+import torchvision
+from torchvision import transforms
 
-def inceptionv3(scope_name='g2'):
-    g2 = tf.Graph() 
-    with g2.as_default() as g:
-        with g.name_scope(scope_name) as scope:
-            module = hub.Module("https://tfhub.dev/google/imagenet/inception_v3/classification/1")
-            input_ = tf.placeholder(tf.float32, shape=(299,299,3))
-#            processed_image = inception_preprocessing.preprocess_image(input_, 299, 299, is_training=False)
-            processed_image = tf.expand_dims(input_,0)
-#            input_resize = tf.image.resize_images(input_,(299,299))
-#            input_new = tf.reshape(input_resize,(-1,299,299,3))
-            logits = module(processed_image)
-            prediction = tf.argmax(logits,axis=1)
-            proba_ = tf.nn.softmax(logits) 
-            tensor_dict = {
-                'input_': input_,
-                'prediction': prediction,
-                'processed': processed_image,
-                'proba_': proba_,
-                'logits': logits
-            }
-    return g2, tensor_dict 
+
+def load_encoder(PATH='mnist_encoder.pt', device='cpu'):
+    model = P_MNIST()
+    model.load_state_dict(torch.load(PATH))
+    model.eval()
+    return model  
+
+class P_MNIST(nn.Module):
+    
+    def __init__(self, z_dim = 100, nc = 1, ndf=16, ndir = 8, device = 'cpu'):
+        super(P_MNIST,self).__init__()
+        self.nc = nc
+        self.ndf = ndf
+        self.z_dim = z_dim
+        self.device = device
+        self.ndir = ndir
+        self.layers = nn.Sequential(
+            # (nc+1) x 28 x 28
+            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # (ndf) x 14 x 14
+            nn.Conv2d(ndf, ndf*2, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # (ndf*2) x 7 x 7
+            nn.Conv2d(ndf*2, ndf*4, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # (ndf*4) x 3 x 3
+        )
+        self.mu = nn.Sequential(
+            nn.Linear(ndf*4*3*3, self.z_dim*self.ndir)
+        )
+        
+    def forward(self, X):
+        X = self.layers(X).view(-1, self.ndf * 4 * 3 * 3)
+        return self.mu(X).chunk(self.ndir, dim=1)
