@@ -60,7 +60,40 @@ class CSGM(torch.nn.Module):
 
         return z_samples, gen_samples, bg_samples
 
-def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
+def reconstruct_celebA_batch(t, mask_tensor, n_pixels, G, device, bs_,
+                               num_samples, z_dim=128, img_dim=128, n_channels = 3,
+                               n_iter = 1000, threshold=0.05, truncation=1.0):
+    bs = bs_
+    noise1 = torch.randn(bs, 512).to(device)
+    noise_param1 = torch.nn.Parameter(noise1)
+    num_pixels = torch.sum(mask_tensor)
+    print("Anchor takes: ", (num_pixels/(3*(256**2))).item()*100//1,"% of image pixels")
+    opt = torch.optim.Adam(lr=1e-2, params=[noise_param1])
+    batch_loss = 1
+    lastloss=1
+    itr_count = 0
+    while batch_loss > threshold:
+        itr_count += 1
+        if (lastloss * 100) // 1 != (batch_loss * 100) // 1:
+            print(itr_count, (batch_loss.item()*10000)//1 * .0001)
+            print((loss1/(num_pixels/3)))
+        lastloss=batch_loss
+        sample_image = torch.nn.functional.interpolate(G(noise_param1, depth=8, alpha=1), scale_factor=1/4)
+        masked_sample = mask_tensor*sample_image
+        e = (masked_sample - t)
+        se = e ** 2
+        loss1 = torch.sum(torch.sum(torch.mean(se,dim=1),dim=-1),dim=-1)
+        #print((loss1/(num_pixels/3)))
+        batch_loss = loss1.sum()/(num_pixels*bs/3)
+        #loss2 = torch.sum(se)/num_pixels
+        #print(loss1.item() // .0001 ==  loss2.item() //.0001)
+        batch_loss.backward()
+        opt.step()
+
+    return noise1, sample_image, masked_sample
+
+
+def reconstruct_batch_celebA(target, filter, n_pixels, G,
                                num_samples, z_dim=128, img_dim=128, n_channels = 3,
                                n_iter = 1000, threshold=0.05, truncation=1.0):
     bs_ = 1
@@ -135,7 +168,7 @@ def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
 
 def reconstruct_batch_threshold(target, filter, n_pixels, G,
-                num_samples,threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, lr=1e-2, 
+                num_samples,threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, lr=1e-2,
                 opt='adam', lambda_ = 0, def_size = 64):
     y = torch.FloatTensor(target).cuda()
     A = torch.FloatTensor(filter).cuda()
@@ -231,7 +264,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
             z = torch.zeros(def_size, z_dim).cuda()
             for i in range(def_size):
                 z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).cuda()
-            z = z.view(-1,z_dim,1,1) 
+            z = z.view(-1,z_dim,1,1)
         return z
     z = create_z(def_size)
     z_param = torch.nn.Parameter(z)
