@@ -135,30 +135,42 @@ def reconstruct_batch_ImageNet(target, filter, n_pixels, G,
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
 
 def reconstruct_batch_threshold(target, filter, n_pixels, G,
-                num_samples,threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, lr=1e-2, 
-                opt='adam', lambda_ = 0, def_size = 64):
+                num_samples, threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, lr=1e-2, 
+                opt='adam', lambda_ = 0, def_size = 64, init_mu = None):
     y = torch.FloatTensor(target).cuda()
     A = torch.FloatTensor(filter).cuda()
-    z = torch.randn(def_size,z_dim,1,1,requires_grad = True).cuda()
+    # closure to allow initial predictions
+    def create_z(def_size):
+        if init_mu is None:
+            z = torch.randn(def_size,z_dim,1,1,requires_grad = True).cuda()
+        else:
+            idx = np.random.randint(0,len(init_mu), size=(def_size,))
+            z = torch.zeros(def_size, z_dim).cuda()
+            for i in range(def_size):
+                z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).cuda()
+            z = z.view(-1,z_dim,1,1) 
+        return z
+    z = create_z(def_size)
     z_param = torch.nn.Parameter(z)
     batch_y = y.unsqueeze(0).repeat(z.shape[0],1,1)
-    complete_zs = [] #np.array([]) #torch.nn.Parameter()
-    # Repalce SGD with Adam?
-    threshold = np.concatenate((threshold,threshold), axis = None)
-    threshold = torch.FloatTensor(threshold).cuda()
+    complete_zs = []
+    threshold_t = torch.zeros(max(def_size, threshold.shape[0])).cuda()
+    threshold_t[:num_samples] = torch.FloatTensor(threshold).cuda()
+    threshold = torch.sort(threshold_t,dim=-1,descending=True)[0].clone()
+    del threshold_t
     threshold_current = threshold[:def_size].clone()
     current_threshold_size = def_size
     if opt == 'adam':
         optim = torch.optim.Adam([z_param], lr=lr)
     else:
         optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
-
+    thresholds_passed = []
+    losses_passed = []
     step = 0
     last_size = num_samples
     sampled = []
     first_lr = lr
     while last_size > 0:
-#        print(batch_y.shape)
         if (step > 1000) or z_param.shape[0] == 0:
             print('restarting with ',last_size, ' left')
             step = 0
@@ -176,34 +188,56 @@ def reconstruct_batch_threshold(target, filter, n_pixels, G,
         x_hat = G(z_param).view(z_param.size()[0],28,28)
         y_hat = x_hat * A
 
-        loss = i_se(y_hat,batch_y)/(n_pixels)
+        loss = i_se(y_hat,batch_y)/(n_pixels+1e-9)
+        # sort losses to match with largest thresholds for quickest collection
+        loss, argloss = torch.sort(loss)
+        # can we further optimize this by making sure smallest loss goes to smallest threshold greater than it?
+        threshold_current = torch.sort(threshold_current, descending=True)[0]
         loss_filt = loss[loss.data > threshold_current.view(loss.shape)]
         loss_val = loss_filt.data.cpu().numpy()
+#        if step % 50 == 0:
+#            print(np.amin(loss_val))
 
         if loss_filt.shape[0] > 0:
             loss_mean = loss_filt.mean()
             reg = z_param.norm(p=2) * lambda_
             loss_f = loss_mean + reg
-            if step % 50 == 0:
-                print(np.amin(loss_val))
+#            if step % 50 == 0:
+ #               print(np.amin(loss_val))
             loss_f.backward()
             optim.step()
         if step % 400 == 0 and opt != 'adam':
             print("updating lr...")
             lr /= 10
             optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
-        z_completed = z_param[loss.data <= threshold_current.view(loss.shape)]
+        correct_idx = argloss[loss.data <= threshold_current.view(loss.shape)]
+        z_completed = z_param[correct_idx]
         if z_completed.size()[0] != 0:
+            # adjust parameters 
             remaining = last_size
             last_size -= z_completed.shape[0]
+            # collect the good samples
             min_len = min(remaining, z_completed.shape[0])
-            sampled.append(x_hat[loss.data <= threshold_current.view(loss.shape)].data.cpu().numpy()[:min_len])
+            sampled.append(x_hat[correct_idx].data.cpu().numpy()[:min_len])
             complete_zs.append(z_completed.data.cpu().numpy()[:min_len].reshape(min_len, z_dim, 1, 1))
-#            z = z_param.data[loss.data > threshold]
-            z[loss.data <= threshold_current.view(loss.shape)] = torch.randn(z_completed.shape[0],100,1,1, requires_grad=True).cuda()
-            end_threshold = min(num_samples,current_threshold_size + z_completed.shape[0])
-            threshold_current[loss.data <= threshold_current.view(loss.shape)] = threshold[current_threshold_size:end_threshold]
+             
+            # update z's to search for more 
+            z = z[argloss]
+            z[loss.data <= threshold_current.view(loss.shape)] = create_z( z_completed.shape[0] )
+            
+            # update the thresholds from queue
+            if num_samples >= def_size: 
+                end_threshold = min(num_samples,current_threshold_size + z_completed.shape[0])
+            else:
+                end_threshold = min(def_size, current_threshold_size + z_completed.shape[0])
+            threshold_current[ (loss.data <= threshold_current.view(loss.shape)).nonzero()[:end_threshold-current_threshold_size]] = threshold[current_threshold_size:end_threshold].view(-1,1)
+            
+#            thresholds_passed.append(threshold_current[ loss.data <= threshold_current.view(loss.shape)])
+#            losses_passed.append(loss[loss.data <= threshold_current.view(loss.shape)])
+            threshold_current[(loss.data <= threshold_current.view(loss.shape)).nonzero()[end_threshold-current_threshold_size:z_completed.shape[0]]] = 1e-9 # just set super low thresholds if the queue is empty
+          #  print(threshold_current)
             current_threshold_size = end_threshold
+            # setup new optimizer for everything
             z_param = torch.nn.Parameter(z)
             if opt == 'adam':
                 optim = torch.optim.Adam([z_param], lr=lr)
@@ -211,20 +245,20 @@ def reconstruct_batch_threshold(target, filter, n_pixels, G,
                 optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
-        #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
+    
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)
-
+#    print("Done")
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
 
 def reconstruct_batch(target, filter, n_pixels, G,
                 num_samples, z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, threshold = 0.05, lr=1e-2, opt='adam', lambda_ = 0, def_size = 64,
-                init_mu = None, init_sigma = None):
+                init_mu = None):
     y = torch.FloatTensor(target).cuda()
     A = torch.FloatTensor(filter).cuda()
     def create_z(def_size):
-        if init_mu is None and init_sigma is None:
+        if init_mu is None:
             z = torch.randn(def_size,z_dim,1,1,requires_grad = True).cuda()
         else:
             idx = np.random.randint(0,len(init_mu), size=(def_size,))
@@ -300,51 +334,8 @@ def reconstruct_batch(target, filter, n_pixels, G,
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
-    print(step)
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)
 
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
-
-def reconstruct(target, filter, n_pixels, G,
-                num_samples, z_dim=100, img_dim=28, n_channels=1, n_iter = 100, threshold = 0.2):
-    y = torch.FloatTensor(target).cuda()
-    A = torch.FloatTensor(filter).cuda()
-    best_z = []
-    i = 0
-    # each sample must be independent (not batch)
-    #   this is because the gradient will not try to improve worst z if mean is low...
-    while i < num_samples:
-        z = torch.randn(1,z_dim,1,1,requires_grad = True).cuda()
-        z_param = torch.nn.Parameter(z)
-        optim = torch.optim.Adam([z_param], lr=1)
-
-        loss_val = 100000
-        j = 0
-        restart = False
-        while loss_val > threshold:
-            optim.zero_grad()
-            x_hat = G(z_param).squeeze()
-            y_hat = x_hat * A
-            loss = se(y_hat,y)/n_pixels
-            loss_val = loss.data.cpu().numpy()
-            loss.backward()
-            optim.step()
-            #if j:
-            #    print(j,loss_val)
-            # random restart
-            if j > 1000:
-            #    restart = True
-                break
-            j += 1
-        # try again...
-        if restart:
-            print("restarting...", loss_val)
-            continue
-        print(i,j,loss_val)
-        i += 1
-        best_z.append(z_param.data.cpu().numpy().reshape(z_dim,1,1))
-    sampled = G(torch.from_numpy(np.array(best_z)).cuda()).view(-1,28,28)
-    unmasked = sampled * (1-A)
-    return sampled.data.cpu().numpy(), unmasked.data.cpu().numpy()
