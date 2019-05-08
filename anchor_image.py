@@ -11,11 +11,15 @@ class AnchorImageMNIST(object):
     """bla"""
     def __init__(self, distribution_path=None,
                  transform_img_fn=None, n=1000, dummys=None, white=None,
-                 segmentation_fn=None, G=None, dataset = None, batch_norm=False):
+                 segmentation_fn=None, G=None, dataset = None, batch_norm=False,
+                 encode = False, encoder=None, threshold=0.05, true_sampling=False):
         """"""
         self.hide = True
         self.white = white
         self.batch_norm = batch_norm
+        self.threshold = threshold
+        self.true_sampling = true_sampling
+        self.encode = encode
         # generator
         if G is not None:
             self.G = G(0).cuda()
@@ -23,6 +27,19 @@ class AnchorImageMNIST(object):
                 self.G.train()
             else:
                 self.G.eval()
+        if encode:
+            # assumes encoder is a function that loads the encoder
+            self.encoder = encoder('cpu')
+            self.encode = encode
+        if self.true_sampling:
+            # to compute "truer density sampling"
+            def sample_p(num_samples):
+                x = np.random.normal(loc=self.threshold, scale=self.threshold/6, size=(num_samples))
+                x = x[x < self.threshold * 2]
+                x = x[x > 0]
+                x[x > self.threshold] = self.threshold * 2 - x[x > self.threshold]
+                return x
+            self.sample_p = sample_p
         if segmentation_fn is None:
             segmentation_fn = lambda x: image_utils.create_segments(x) 
         self.segmentation = segmentation_fn
@@ -231,7 +248,56 @@ class AnchorImageMNIST(object):
             labels = (current_preds_max == true_label).astype(int)
             return raw_data, data, labels
 
+        def sample_fn_csgm_encoder(present, num_samples, compute_labels=True):
+            '''
+            present = which segments to choose from...
+            '''
+            if not compute_labels:
+                data = np.random.randint(
+                    0, 2, num_samples * n_features).reshape(
+                        (num_samples, n_features))
+                data[:, present] = 1
+                return [], data, []
 
+            data = np.zeros((num_samples,n_features))
+            data[:, present] = 1
+            # now generate some images 
+            _, mask = image_utils.create_mask(None, segments, {'feature': present})
+            target = self.get_target(image, mask)
+            
+            input_X = (mask*image).reshape(-1,1,28,28)
+            Zs = self.encoder(torch.from_numpy(input_X).type(torch.FloatTensor))
+            
+            #plt.imshow(target)
+            BS = 64
+            #raw_data = np.zeros((num_samples,28,28))
+            raw_data = data
+            labels = np.zeros((num_samples)).astype(int)
+            for j in range(0,num_samples,BS):
+                n_s = min(num_samples,j+BS) - j
+                if self.true_sampling:
+                    _,_,backgrounds = csgm.reconstruct_batch_threshold(target, mask, np.sum(mask), self.G, n_s,
+                                                             self.sample_p(n_s), 
+                                                             lr= 1e-1 if self.batch_norm else 1e-2, 
+                                                             init_mu = Zs)
+                else:
+                    _,_, backgrounds = csgm.reconstruct_batch(target, mask, np.sum(mask), self.G, n_s, 
+                                                             lr= 1e-1 if self.batch_norm else 1e-2, 
+                                                             init_mu = Zs,
+                                                             threshold = self.threshold)
+#                raw_data[j:j+n_s] = raw_data_.squeeze()
+                current_batch = np.zeros((n_s, 28,28))
+                for i in range(len(backgrounds)):
+                    temp = copy.deepcopy(target)
+                    curr = backgrounds[i] ## should be (28,28)
+                    temp += curr
+                    current_batch[i] = np.expand_dims(temp,0)
+                current_preds = classifier_fn(current_batch)
+                current_preds_max = np.argmax(current_preds, axis=1)
+                current_labels = (current_preds_max == true_label).astype(int)
+                labels[j:j+n_s] = current_labels 
+            return raw_data, data, labels             
+    
         # new and IMPROVED with csgm
         def sample_fn_csgm(present, num_samples, compute_labels=True):
             '''
@@ -256,8 +322,13 @@ class AnchorImageMNIST(object):
             labels = np.zeros((num_samples)).astype(int)
             for j in range(0,num_samples,BS):
                 n_s = min(num_samples,j+BS) - j
-                _,_, backgrounds = csgm.reconstruct_batch(target, mask, np.sum(mask), self.G, n_s, lr= 1e-1 if self.batch_norm else 1e-2)
-#                raw_data[j:j+n_s] = raw_data_.squeeze()
+                if self.true_sampling:
+                    _,_,backgrounds = csgm.reconstruct_batch_threshold(target, mask, np.sum(mask), self.G, n_s, self.sample_p(n_s), 
+                                                             lr= 1e-1 if self.batch_norm else 1e-2) 
+                else:
+                    _,_, backgrounds = csgm.reconstruct_batch(target, mask, np.sum(mask), self.G, n_s, 
+                                                             lr= 1e-1 if self.batch_norm else 1e-2, 
+                                                             threshold = self.threshold)
                 current_batch = np.zeros((n_s, 28,28))
                 for i in range(len(backgrounds)):
                     temp = copy.deepcopy(target)
@@ -296,7 +367,7 @@ class AnchorImageMNIST(object):
             return raw_data, data, labels
         self.stein = None
 #        sample = sample_fn_stein
-        sample = sample_fn_csgm if self.hide else sample_fn_dummy
+        sample = sample_fn_csgm_encoder if self.encode else ( sample_fn_csgm if self.hide else sample_fn_dummy )
         return segments, sample
 
     def explain_instance(self, image, classifier_fn, threshold=0.95,
