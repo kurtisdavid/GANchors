@@ -8,7 +8,7 @@ from pytorch_pretrained_biggan import (BigGAN, one_hot_from_names, truncated_noi
 import torchvision.models as models
 
 i_se = lambda x,y: torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1)
-i_se_3d = lambda x,y: torch.sum(torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=1), dim=1)
+i_se_3d = lambda x,y: torch.sum(torch.sum(torch.sum(torch.nn.MSELoss(reduction='none')(x,y),dim=1),dim=-1), dim=-1)
 se = torch.nn.MSELoss(reduction='none')
 
 # KDE based sampling
@@ -94,15 +94,18 @@ def reconstruct_celebA_batch(t, mask_tensor, n_pixels, G, device, bs_,
 
 def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, bs_,
                                num_samples, z_dim=128, img_dim=128, n_channels = 3,
-                               n_iter = 1000, threshold=0.05, truncation=1.0):
+                               n_iter = 1000, threshold=0.05, truncation=1.0, lr=1e-2):
+    print(np.min(t), np.max(t))
     t = torch.FloatTensor(np.moveaxis(t,-1,0).reshape(1,3,256,256)).cuda()
     bs = bs_
     noise1 = torch.randn(bs, 512).to(device)
     noise_param1 = torch.nn.Parameter(noise1)
     mask_tensor = torch.FloatTensor(mask_tensor.reshape(1,3,256,256)).cuda()
-    num_pixels = torch.sum(mask_tensor) + 1e-9
+    num_pixels = n_pixels + 1e-9
+    print(num_pixels)
+    print(threshold)
     print("Anchor takes: ", (num_pixels/(3*(256**2))).item()*100//1,"% of image pixels")
-    opt = torch.optim.Adam(lr=1e-1, params=[noise_param1])
+    opt = torch.optim.Adam(lr=lr, params=[noise_param1])
     batch_loss = 1.0762
     lastloss=1.03672
     itr_count = 0
@@ -114,56 +117,48 @@ def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, b
  #   print("MASK_TENSOR: ", mask_tensor.shape, torch.min(mask_tensor), torch.max(mask_tensor))
 
     while last_size>0:
+        opt.zero_grad()
         itr_count += 1
         if itr_count > 1000:
             noise1 = torch.randn(bs, 512).to(device)
             noise_param1 = torch.nn.Parameter(noise1)
-            opt = torch.optim.Adam(params=[noise_param1], lr=1e-1)
+            opt = torch.optim.Adam(params=[noise_param1], lr=lr)
             itr_count = 0
 
-        if (lastloss * 100) // 1 != (batch_loss * 100) // 1:
-            print(itr_count, (batch_loss*10000)//1 * .0001)
         lastloss=batch_loss
         sample_image = torch.nn.functional.interpolate(G(noise_param1, depth=8, alpha=1), scale_factor=1/4)
 
 
-  #      print("SAMPLE: ", sample_image.shape, torch.min(sample_image), torch.max(sample_image))
         masked_sample = mask_tensor*sample_image
-   #     print("MASKED TARGET: ", masked_sample.shape, torch.min(masked_sample), torch.max(masked_sample))
+    #    print(masked_sample.shape)
         e = (masked_sample - t)
         se = e ** 2
-        loss1 = torch.sum(torch.sum(torch.mean(se,dim=1),dim=-1),dim=-1) / (num_pixels / 3)
+        loss1 = torch.sum(torch.sum(torch.mean( se,dim=1),dim=-1),dim=-1) / (num_pixels / 3)
 
         threshmask = loss1.data > threshold
         loss_filt = loss1[threshmask]
         continue_z = noise_param1[loss1.data > threshold]
         done_z = noise_param1[loss1.data <= threshold]
-#        print(batch_loss)
-
+    #    print(loss_filt)
+    #    print("done:", loss1[loss1.data <= threshold])
         if loss_filt.shape[0] > 0:
-            #print((loss1/(num_pixels/3)))
-            batch_loss = loss_filt.sum()/(loss_filt.shape[0])
- #           print(batch_loss)
-            #loss2 = torch.sum(se)/num_pixels
-            #print(loss1.item() // .0001 ==  loss2.item() //.0001)
+            batch_loss = loss_filt.mean()
+ #           if itr_count % 10 == 0:
+ #               print(itr_count , loss_filt)
             batch_loss.backward()
             opt.step()
 
         if done_z.size()[0] != 0:
-    #        print(threshmask)
-   #         print("========>removing")
-    #        print(loss1.data)
             remaining = last_size
             last_size -= done_z.shape[0]
             min_len = min(remaining, done_z.shape[0])
-  #          print(min_len)
             sampled.append(sample_image[loss1.data <= threshold].data.cpu().numpy()[:min_len])
             complete_zs.append(done_z.data.cpu().numpy()[:min_len].reshape(min_len, 512, 1, 1))
 
             noise1[loss1.data <= threshold] = torch.randn(done_z.shape[0], 512, requires_grad=True).to(device)
             noise_param1 = torch.nn.Parameter(noise1)
 
-            opt = torch.optim.Adam(params=[noise_param1], lr=1e-1)
+            opt = torch.optim.Adam(params=[noise_param1], lr=lr)
 
     opt.zero_grad()
 

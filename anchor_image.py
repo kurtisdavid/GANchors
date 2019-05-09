@@ -740,6 +740,9 @@ class AnchorImageCeleb(object):
             _, mask = image_utils.create_mask(None, segments, {'feature': present}, rgb=True)
             print(present)
             target = self.get_target(image, mask)
+
+            mask = np.moveaxis(mask,-1,0)
+            self.last_target = target
             print(target.shape)
             #plt.imshow(target)
             BS = 64
@@ -752,7 +755,7 @@ class AnchorImageCeleb(object):
                     _,_,backgrounds = csgm.reconstruct_batch_threshold(target, mask, np.sum(mask), self.G, n_s, self.sample_p(n_s),
                                                              lr= 1e-1 if self.batch_norm else 1e-2)
                 else:
-                    _,_, backgrounds = csgm.reconstruct_celebA_batch_early_remove(target, mask, G=self.G, bs_=2, device=self.device, num_samples=n_s, n_pixels=np.sum(mask), threshold=.4)
+                    _,_, backgrounds = csgm.reconstruct_celebA_batch_early_remove(target, mask, np.sum(mask), self.G, self.device, 2, n_s, threshold=self.threshold)
 
                 current_batch = np.zeros((n_s, 256,256,3))
                 for i in range(len(backgrounds)):
