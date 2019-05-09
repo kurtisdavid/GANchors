@@ -26,7 +26,7 @@ def ShowImageNoAxis(image, boundaries=None, save=None):
         plt.savefig(save)
     plt.show()
 
-def create_mask(image, segments, exp = {}):
+def create_mask(image, segments, exp = {}, rgb=False):
 #    temp = np.ones(image.shape)
     mask = np.zeros(segments.shape)
     if 'feature' not in exp:
@@ -35,6 +35,9 @@ def create_mask(image, segments, exp = {}):
         mask[segments == f] = 1
     # this is so that we have measurement matrix A
     mask_new = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+    if rgb:
+        mask = np.tile(np.expand_dims(mask, -1), (1, 1, 3))
+
     return mask_new, mask
 
 def extend_channels(image, nc = 3):
@@ -45,7 +48,7 @@ def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2, target_num=15, 
         image = extend_channels(image)
         seg =  skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=max_dist, ratio=ratio)
     else:
-        seg = skimage.segmentation.slic(image, n_segments=target_num, compactness=compactness)
+        seg = skimage.segmentation.slic(image, n_segments=25, compactness=10)#target_num, compactness=compactness)
         return seg
     md = 3
     ct = .1
@@ -59,7 +62,7 @@ def create_segments(image, kernel_size=2, max_dist=3, ratio=0.2, target_num=15, 
 #            print(len(np.unique(seg)), md)
             md -= ct/4
             seg = skimage.segmentation.quickshift(image, kernel_size=kernel_size, max_dist=md, ratio=ratio)
-        ct /= 4 
+        ct /= 4
     print(len(np.unique(seg)), md)
     return seg
 

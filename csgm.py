@@ -99,30 +99,37 @@ def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, b
     bs = bs_
     noise1 = torch.randn(bs, 512).to(device)
     noise_param1 = torch.nn.Parameter(noise1)
-    mask_tensor = torch.FloatTensor(mask_tensor).cuda()
-    num_pixels = torch.sum(mask_tensor)
+    mask_tensor = torch.FloatTensor(mask_tensor.reshape(1,3,256,256)).cuda()
+    num_pixels = torch.sum(mask_tensor) + 1e-9
     print("Anchor takes: ", (num_pixels/(3*(256**2))).item()*100//1,"% of image pixels")
     opt = torch.optim.Adam(lr=1e-1, params=[noise_param1])
-    batch_loss = 1
-    lastloss=1
+    batch_loss = 1.0762
+    lastloss=1.03672
     itr_count = 0
     last_size = num_samples
     sampled = []
     complete_zs = []
 
-    print("TENSOR TARGET: ", t.shape, torch.min(t), torch.max(t))
+#    print("TENSOR TARGET: ", t.shape, torch.min(t), torch.max(t))
+ #   print("MASK_TENSOR: ", mask_tensor.shape, torch.min(mask_tensor), torch.max(mask_tensor))
 
-    while last_size!=0:
+    while last_size>0:
         itr_count += 1
+        if itr_count > 1000:
+            noise1 = torch.randn(bs, 512).to(device)
+            noise_param1 = torch.nn.Parameter(noise1)
+            opt = torch.optim.Adam(params=[noise_param1], lr=1e-1)
+            itr_count = 0
+
         if (lastloss * 100) // 1 != (batch_loss * 100) // 1:
-            print(itr_count, (batch_loss.item()*10000)//1 * .0001)
-            print((loss1))
+            print(itr_count, (batch_loss*10000)//1 * .0001)
         lastloss=batch_loss
         sample_image = torch.nn.functional.interpolate(G(noise_param1, depth=8, alpha=1), scale_factor=1/4)
 
 
+  #      print("SAMPLE: ", sample_image.shape, torch.min(sample_image), torch.max(sample_image))
         masked_sample = mask_tensor*sample_image
-        print("TENSOR TARGET: ", masked_sample.shape, torch.min(masked_sample), torch.max(masked_sample))
+   #     print("MASKED TARGET: ", masked_sample.shape, torch.min(masked_sample), torch.max(masked_sample))
         e = (masked_sample - t)
         se = e ** 2
         loss1 = torch.sum(torch.sum(torch.mean(se,dim=1),dim=-1),dim=-1) / (num_pixels / 3)
@@ -131,24 +138,25 @@ def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, b
         loss_filt = loss1[threshmask]
         continue_z = noise_param1[loss1.data > threshold]
         done_z = noise_param1[loss1.data <= threshold]
-
+#        print(batch_loss)
 
         if loss_filt.shape[0] > 0:
             #print((loss1/(num_pixels/3)))
             batch_loss = loss_filt.sum()/(loss_filt.shape[0])
-            print(batch_loss)
+ #           print(batch_loss)
             #loss2 = torch.sum(se)/num_pixels
             #print(loss1.item() // .0001 ==  loss2.item() //.0001)
             batch_loss.backward()
             opt.step()
 
         if done_z.size()[0] != 0:
-            print(threshmask)
-            print("========>removing")
-            print(loss1.data)
+    #        print(threshmask)
+   #         print("========>removing")
+    #        print(loss1.data)
             remaining = last_size
             last_size -= done_z.shape[0]
             min_len = min(remaining, done_z.shape[0])
+  #          print(min_len)
             sampled.append(sample_image[loss1.data <= threshold].data.cpu().numpy()[:min_len])
             complete_zs.append(done_z.data.cpu().numpy()[:min_len].reshape(min_len, 512, 1, 1))
 
@@ -162,6 +170,7 @@ def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, b
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample*(1-mask_tensor.detach().cpu().numpy())).cuda()
+    print("DONE SAMPLING")
 
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
 
@@ -242,7 +251,7 @@ def reconstruct_batch_celebA(target, filter, n_pixels, G,
     return complete_zs, final_sample, unmasked.data.cpu().numpy()
 
 def reconstruct_batch_threshold(target, filter, n_pixels, G,
-                num_samples, threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, lr=1e-2, 
+                num_samples, threshold,  z_dim=100, img_dim=28, n_channels=1, n_iter = 1000, lr=1e-2,
                 opt='adam', lambda_ = 0, def_size = 64, init_mu = None):
     y = torch.FloatTensor(target).cuda()
     A = torch.FloatTensor(filter).cuda()
@@ -255,7 +264,7 @@ def reconstruct_batch_threshold(target, filter, n_pixels, G,
             z = torch.zeros(def_size, z_dim).cuda()
             for i in range(def_size):
                 z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).cuda()
-            z = z.view(-1,z_dim,1,1) 
+            z = z.view(-1,z_dim,1,1)
         return z
     z = create_z(def_size)
     z_param = torch.nn.Parameter(z)
@@ -320,25 +329,25 @@ def reconstruct_batch_threshold(target, filter, n_pixels, G,
         correct_idx = argloss[loss.data <= threshold_current.view(loss.shape)]
         z_completed = z_param[correct_idx]
         if z_completed.size()[0] != 0:
-            # adjust parameters 
+            # adjust parameters
             remaining = last_size
             last_size -= z_completed.shape[0]
             # collect the good samples
             min_len = min(remaining, z_completed.shape[0])
             sampled.append(x_hat[correct_idx].data.cpu().numpy()[:min_len])
             complete_zs.append(z_completed.data.cpu().numpy()[:min_len].reshape(min_len, z_dim, 1, 1))
-             
-            # update z's to search for more 
+
+            # update z's to search for more
             z = z[argloss]
             z[loss.data <= threshold_current.view(loss.shape)] = create_z( z_completed.shape[0] )
-            
+
             # update the thresholds from queue
-            if num_samples >= def_size: 
+            if num_samples >= def_size:
                 end_threshold = min(num_samples,current_threshold_size + z_completed.shape[0])
             else:
                 end_threshold = min(def_size, current_threshold_size + z_completed.shape[0])
             threshold_current[ (loss.data <= threshold_current.view(loss.shape)).nonzero()[:end_threshold-current_threshold_size]] = threshold[current_threshold_size:end_threshold].view(-1,1)
-            
+
 #            thresholds_passed.append(threshold_current[ loss.data <= threshold_current.view(loss.shape)])
 #            losses_passed.append(loss[loss.data <= threshold_current.view(loss.shape)])
             threshold_current[(loss.data <= threshold_current.view(loss.shape)).nonzero()[end_threshold-current_threshold_size:z_completed.shape[0]]] = 1e-9 # just set super low thresholds if the queue is empty
@@ -352,7 +361,7 @@ def reconstruct_batch_threshold(target, filter, n_pixels, G,
                 optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
-    
+
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)
