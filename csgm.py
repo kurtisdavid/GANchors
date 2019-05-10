@@ -92,19 +92,30 @@ def reconstruct_celebA_batch(t, mask_tensor, n_pixels, G, device, bs_,
 
     return noise1, sample_image, masked_sample
 
-def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, bs_,
-                               num_samples, z_dim=128, img_dim=128, n_channels = 3,
-                               n_iter = 1000, threshold=0.05, truncation=1.0, lr=1e-2):
+def reconstruct_celebA_batch_threshold(t, mask_tensor, n_pixels, G, device, bs_,
+                               num_samples, threshold, z_dim=512, img_dim=256, n_channels = 3,
+                               n_iter = 1000, truncation=1.0, lr=1e-1,
+                               init_mu = None):
     print(np.min(t), np.max(t))
-    t = torch.FloatTensor(np.moveaxis(t,-1,0).reshape(1,3,256,256)).cuda()
+    t = torch.FloatTensor(np.moveaxis(t,-1,0).reshape(1,3,256,256)).to(device)
     bs = bs_
-    noise1 = torch.randn(bs, 512).to(device)
+    def create_z(def_size):
+        if init_mu is None:
+            z = torch.randn(def_size,z_dim,requires_grad = True).to(device)
+        else:
+            idx = np.random.randint(0,len(init_mu), size=(def_size,))
+            z = torch.zeros(def_size, z_dim).cuda()
+            for i in range(def_size):
+                z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).to(device)
+        return z
+
+    noise1 = create_z(bs)
     noise_param1 = torch.nn.Parameter(noise1)
     mask_tensor = torch.FloatTensor(mask_tensor.reshape(1,3,256,256)).cuda()
     num_pixels = n_pixels + 1e-9
     print(num_pixels)
     print(threshold)
-    print("Anchor takes: ", (num_pixels/(3*(256**2))).item()*100//1,"% of image pixels")
+#    print("Anchor takes: ", (num_pixels/(3*(256**2))).item()*100//1,"% of image pixels")
     opt = torch.optim.Adam(lr=lr, params=[noise_param1])
     batch_loss = 1.0762
     lastloss=1.03672
@@ -120,7 +131,7 @@ def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, b
         opt.zero_grad()
         itr_count += 1
         if itr_count > 1000:
-            noise1 = torch.randn(bs, 512).to(device)
+            noise1 = create_z(bs)
             noise_param1 = torch.nn.Parameter(noise1)
             opt = torch.optim.Adam(params=[noise_param1], lr=lr)
             itr_count = 0
@@ -143,8 +154,8 @@ def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, b
     #    print("done:", loss1[loss1.data <= threshold])
         if loss_filt.shape[0] > 0:
             batch_loss = loss_filt.mean()
- #           if itr_count % 10 == 0:
- #               print(itr_count , loss_filt)
+            if itr_count % 10 == 0:
+                print(itr_count , loss_filt)
             batch_loss.backward()
             opt.step()
 
@@ -155,7 +166,95 @@ def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, b
             sampled.append(sample_image[loss1.data <= threshold].data.cpu().numpy()[:min_len])
             complete_zs.append(done_z.data.cpu().numpy()[:min_len].reshape(min_len, 512, 1, 1))
 
-            noise1[loss1.data <= threshold] = torch.randn(done_z.shape[0], 512, requires_grad=True).to(device)
+            noise1[loss1.data <= threshold] = create_z(done_z.shape[0])
+            noise_param1 = torch.nn.Parameter(noise1)
+
+            opt = torch.optim.Adam(params=[noise_param1], lr=lr)
+
+    opt.zero_grad()
+
+    complete_zs = np.concatenate(complete_zs, axis=0)
+    final_sample = np.concatenate(sampled,axis=0)
+    unmasked = torch.from_numpy(final_sample*(1-mask_tensor.detach().cpu().numpy())).cuda()
+    print("DONE SAMPLING")
+
+    return complete_zs, final_sample, unmasked.data.cpu().numpy()
+
+def reconstruct_celebA_batch_early_remove(t, mask_tensor, n_pixels, G, device, bs_,
+                               num_samples, z_dim=512, img_dim=256, n_channels = 3,
+                               n_iter = 1000, threshold=0.05, truncation=1.0, lr=1e-1,
+                               init_mu = None):
+    print(np.min(t), np.max(t))
+    t = torch.FloatTensor(np.moveaxis(t,-1,0).reshape(1,3,256,256)).to(device)
+    bs = bs_
+    def create_z(def_size):
+        if init_mu is None:
+            z = torch.randn(def_size,z_dim,requires_grad = True).to(device)
+        else:
+            idx = np.random.randint(0,len(init_mu), size=(def_size,))
+            z = torch.zeros(def_size, z_dim).cuda()
+            for i in range(def_size):
+                z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).to(device)
+        return z
+
+    noise1 = create_z(bs)
+    noise_param1 = torch.nn.Parameter(noise1)
+    mask_tensor = torch.FloatTensor(mask_tensor.reshape(1,3,256,256)).cuda()
+    num_pixels = n_pixels + 1e-9
+    print(num_pixels)
+    print(threshold)
+#    print("Anchor takes: ", (num_pixels/(3*(256**2))).item()*100//1,"% of image pixels")
+    opt = torch.optim.Adam(lr=lr, params=[noise_param1])
+    batch_loss = 1.0762
+    lastloss=1.03672
+    itr_count = 0
+    last_size = num_samples
+    sampled = []
+    complete_zs = []
+
+#    print("TENSOR TARGET: ", t.shape, torch.min(t), torch.max(t))
+ #   print("MASK_TENSOR: ", mask_tensor.shape, torch.min(mask_tensor), torch.max(mask_tensor))
+
+    while last_size>0:
+        opt.zero_grad()
+        itr_count += 1
+        if itr_count > 1000:
+            noise1 = create_z(bs)
+            noise_param1 = torch.nn.Parameter(noise1)
+            opt = torch.optim.Adam(params=[noise_param1], lr=lr)
+            itr_count = 0
+
+        lastloss=batch_loss
+        sample_image = torch.nn.functional.interpolate(G(noise_param1, depth=8, alpha=1), scale_factor=1/4)
+
+
+        masked_sample = mask_tensor*sample_image
+    #    print(masked_sample.shape)
+        e = (masked_sample - t)
+        se = e ** 2
+        loss1 = torch.sum(torch.sum(torch.mean( se,dim=1),dim=-1),dim=-1) / (num_pixels / 3)
+
+        threshmask = loss1.data > threshold
+        loss_filt = loss1[threshmask]
+        continue_z = noise_param1[loss1.data > threshold]
+        done_z = noise_param1[loss1.data <= threshold]
+    #    print(loss_filt)
+    #    print("done:", loss1[loss1.data <= threshold])
+        if loss_filt.shape[0] > 0:
+            batch_loss = loss_filt.mean()
+            if itr_count % 10 == 0:
+                print(itr_count , loss_filt)
+            batch_loss.backward()
+            opt.step()
+
+        if done_z.size()[0] != 0:
+            remaining = last_size
+            last_size -= done_z.shape[0]
+            min_len = min(remaining, done_z.shape[0])
+            sampled.append(sample_image[loss1.data <= threshold].data.cpu().numpy()[:min_len])
+            complete_zs.append(done_z.data.cpu().numpy()[:min_len].reshape(min_len, 512, 1, 1))
+
+            noise1[loss1.data <= threshold] = create_z(done_z.shape[0])
             noise_param1 = torch.nn.Parameter(noise1)
 
             opt = torch.optim.Adam(params=[noise_param1], lr=lr)
@@ -375,7 +474,8 @@ def reconstruct_batch(target, filter, n_pixels, G,
             idx = np.random.randint(0,len(init_mu), size=(def_size,))
             z = torch.zeros(def_size, z_dim).cuda()
             for i in range(def_size):
-                z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).cuda()
+                z[i,:] = torch.normal(init_mu[idx[i]], 10*torch.ones(1, z_dim) * init_mu[idx[i]].mean())
+#                z[i,:] = init_mu[idx[i]].cuda() + torch.randn(1, z_dim).cuda()
             z = z.view(-1,z_dim,1,1)
         return z
     z = create_z(def_size)
@@ -429,6 +529,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
             lr /= 10
             optim = torch.optim.SGD([z_param], lr=lr, momentum=0.9)
         z_completed = z_param[loss.data <= threshold]
+        print(loss[loss.data <= threshold], step)
         if z_completed.size()[0] != 0:
             remaining = last_size
             last_size -= z_completed.shape[0]
@@ -445,6 +546,7 @@ def reconstruct_batch(target, filter, n_pixels, G,
             if z_param.shape[0] > 0:
                 batch_y = y.unsqueeze(0).repeat(z_param.shape[0],1,1)
         #optim = torch.optim.SGD([z_param], lr=1, momentum=0.9)
+    print(step)
     complete_zs = np.concatenate(complete_zs, axis=0)
     final_sample = np.concatenate(sampled,axis=0)
     unmasked = torch.from_numpy(final_sample).cuda() * (1-A)
